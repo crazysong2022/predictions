@@ -5,18 +5,12 @@ from contextlib import closing
 import bcrypt
 
 
-def connect_db():
-    """使用统一的数据库连接函数"""
-    return get_db_connection()
-
-
 def hash_password(password):
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 
 def check_password(password, hashed):
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
-
 
 def login_form():
     st.subheader("🔐 登录")
@@ -29,16 +23,23 @@ def login_form():
             try:
                 with closing(get_db_connection()) as conn:
                     with conn.cursor() as cur:
-                        # ✅ 改成查询 id, password_hash, role
                         cur.execute("SELECT id, password_hash, role FROM users WHERE username = %s", (username,))
                         result = cur.fetchone()
                         if result:
-                            user_id, hashed, role = result  # ✅ 获取到 user_id
+                            user_id, hashed, role = result
                             if check_password(password, hashed):
+                                # ✅ 更新 session_state 中的登录状态
                                 st.session_state['logged_in'] = True
                                 st.session_state['username'] = username
                                 st.session_state['role'] = role
-                                st.session_state['user_id'] = user_id  # ✅ 添加这一行
+                                st.session_state['user_id'] = user_id
+
+                                # ✅ 设置 URL 参数，用于刷新页面时恢复登录状态
+                                st.query_params.update({
+                                    "logged_in": "True",
+                                    "username": username
+                                })
+
                                 st.success(f"欢迎回来，{username}！")
                                 st.rerun()
                             else:
@@ -66,13 +67,6 @@ def register_form():
                 try:
                     with closing(get_db_connection()) as conn:
                         with conn.cursor() as cur:
-
-                            # 调试信息：查看当前数据库用户数
-                            cur.execute("SELECT COUNT(*) FROM users;")
-                            total_users = cur.fetchone()[0]
-                            st.write("📊 当前用户总数:", total_users)
-
-                            # 检查用户名是否存在
                             cur.execute("SELECT * FROM users WHERE username = %s", (username,))
                             if cur.fetchone():
                                 st.error("该用户名已被占用")
@@ -84,29 +78,29 @@ def register_form():
                                 )
                                 conn.commit()
                                 st.success("✅ 注册成功，请登录")
-
                 except Exception as e:
                     conn.rollback()
                     st.error(f"注册失败：{str(e)}")
 
 
 def logout():
-    st.session_state.clear()
-    st.info("您已成功登出")
-    st.rerun()
+    # 清除 session_state 中的所有登录相关字段
+    st.session_state['logged_in'] = False
+    if 'username' in st.session_state:
+        del st.session_state['username']
+    if 'role' in st.session_state:
+        del st.session_state['role']
+    if 'user_id' in st.session_state:
+        del st.session_state['user_id']
 
+    # 清除 URL 参数（关键）
+    st.query_params.clear()
+
+    st.info("您已成功登出")
+    st.rerun()  # 强制刷新页面以反映最新状态
 
 def login_page():
-    if 'logged_in' not in st.session_state:
-        st.session_state['logged_in'] = False
-
-    if st.session_state['logged_in']:
-        st.sidebar.success(f"当前用户：{st.session_state['username']} ({st.session_state['role']})")
-        if st.sidebar.button("🚪 登出"):
-            logout()
-        return
-
-    st.sidebar.title("请登录")
+    st.title("🔐 登录到 多源事件数据浏览器")
     tab1, tab2 = st.tabs(["登录", "注册"])
     with tab1:
         login_form()

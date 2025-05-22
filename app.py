@@ -1,5 +1,5 @@
 import streamlit as st
-from modules.auth import login_page
+from modules.auth import login_page, logout
 from datetime import datetime, timedelta
 from contextlib import closing
 import json
@@ -15,17 +15,68 @@ from renderers import polymarket_renderer
 # ==== 导入评论模块 ====
 from modules.comments import display_comments_section
 
+# ===== 初始化会话状态 =====
+if "logged_in" not in st.session_state:
+    st.session_state["logged_in"] = False
+if "username" not in st.session_state:
+    st.session_state["username"] = None
+if "role" not in st.session_state:
+    st.session_state["role"] = None
+if "user_id" not in st.session_state:
+    st.session_state["user_id"] = None
+
+# ===== 从 URL 参数恢复会话状态 =====
+query_params = st.query_params
+if 'logged_in' in query_params and 'username' in query_params:
+    logged_in = query_params['logged_in'] == 'True'
+    username = query_params['username']
+
+    # 可选：验证用户是否存在数据库中（提高安全性）
+    try:
+        from utils.db_utils import get_db_connection
+        with closing(get_db_connection()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, role FROM users WHERE username = %s", (username,))
+                result = cur.fetchone()
+                if result:
+                    user_id, role = result
+                    st.session_state["logged_in"] = logged_in
+                    st.session_state["username"] = username
+                    st.session_state["role"] = role
+                    st.session_state["user_id"] = user_id
+                else:
+                    st.session_state["logged_in"] = False
+                    st.query_params.clear()
+    except Exception as e:
+        st.session_state["logged_in"] = False
+        st.query_params.clear()
+
 # ===== 页面配置 =====
 st.set_page_config(page_title="🔍 多源事件数据浏览器", layout="wide")
 
 # ===== 登录检查 =====
-if 'logged_in' not in st.session_state or not st.session_state['logged_in']:
+if not st.session_state["logged_in"]:
     login_page()
     st.stop()
 
 # 获取当前用户角色和ID
 user_role = st.session_state.get('role', 'user')
-user_id = st.session_state.get('user_id')  # 假设登录后存储了user_id
+user_id = st.session_state.get('user_id')
+
+# ===== 显示欢迎信息 + 登出按钮 =====
+col1, col2 = st.columns([10, 1])
+with col1:
+    st.markdown(f"👋 欢迎回来，{st.session_state['username']} ({st.session_state['role']})")
+with col2:
+    if st.button("🚪 登出", use_container_width=True, key="logout_button"):
+        logout()
+        st.rerun()
+
+# 更新 URL 参数以反映当前登录状态
+st.query_params.update({
+    "logged_in": str(st.session_state["logged_in"]),
+    "username": st.session_state["username"]
+})
 
 # ===== 页面标题 =====
 st.title("🔍 多源事件数据浏览器")
