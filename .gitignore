@@ -1,0 +1,35 @@
+# 虚拟环境
+myenv/
+
+# 项目管理文件夹
+management/
+
+# Python 缓存和编译文件
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 日志文件
+*.log
+*.out
+
+# 数据文件
+*.csv
+*.xlsx
+*.xls
+*.parquet
+
+# 临时文件和配置
+*.tmp
+*.temp
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Streamlit 特定配置
+.streamlit/secrets.toml
+.DS_Store
+.ipynb_checkpoints
