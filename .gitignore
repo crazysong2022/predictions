@@ -3,6 +3,7 @@ myenv/
 
 # 项目管理文件夹
 management/
+polymarket_get.py
 
 # Python 缓存和编译文件
 __pycache__/
