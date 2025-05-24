@@ -5,6 +5,7 @@ from contextlib import closing
 import json
 import os
 import psycopg2
+import threading
 
 # ==== 导入采集函数 ====
 from data_sources import get_fetch_function
@@ -59,6 +60,7 @@ def show_events_by_sub_category(conn, category, sub_category, user_role, user_id
 def render_event_card(slug, title, lists_data, api_source, user_role, user_id, conn):
     """渲染单个事件卡片"""
     with st.expander(f"📎 {title or slug}"):
+
         try:
             if isinstance(lists_data, str):
                 event_data = json.loads(lists_data)
@@ -73,6 +75,16 @@ def render_event_card(slug, title, lists_data, api_source, user_role, user_id, c
             st.error(f"❌ 解析数据失败：{e}")
             return
 
+        # ==== 渲染器选择 ====
+        if api_source == "polymarket":
+            polymarket_renderer.display_event(event_data)
+        else:
+            st.info("⚠️ 当前数据源暂不支持展示")
+
+        # ==== 评论区 ====
+        st.divider()
+        display_comments_section(event_title=title, user_id=user_id)
+
         # ==== 刷新按钮逻辑（管理员专属）====
         with conn.cursor() as cur:
             cur.execute("SELECT updated_time FROM contents WHERE slug = %s", (slug,))
@@ -80,12 +92,10 @@ def render_event_card(slug, title, lists_data, api_source, user_role, user_id, c
 
         updated_time = updated_time_row[0] if updated_time_row else None
 
-        # 统一时区为 UTC
         now = datetime.now(timezone.utc)
 
         if updated_time is not None:
             if updated_time.tzinfo is None:
-                # 如果没有时区信息，假设是 UTC
                 updated_time = updated_time.replace(tzinfo=timezone.utc)
             else:
                 updated_time = updated_time.astimezone(timezone.utc)
@@ -128,15 +138,50 @@ def render_event_card(slug, title, lists_data, api_source, user_role, user_id, c
                     else:
                         st.warning("⚠️ 无法获取最新数据")
 
-        # ==== 渲染器选择 ====
-        if api_source == "polymarket":
-            polymarket_renderer.display_event(event_data)
-        else:
-            st.info("⚠️ 当前数据源暂不支持展示")
+        # ===== 异步刷新逻辑开始 =====
+        def async_refresh_task():
+            try:
+                with closing(get_db_connection()) as refresh_conn:
+                    with refresh_conn.cursor() as cur:
+                        cur.execute("SELECT updated_time FROM contents WHERE slug = %s", (slug,))
+                        updated_time_row = cur.fetchone()
 
-        # ==== 评论区 ====
-        st.divider()
-        display_comments_section(event_title=title, user_id=user_id)
+                    now = datetime.now(timezone.utc)
+                    updated_time = updated_time_row[0] if updated_time_row else None
+
+                    if updated_time is not None and updated_time.tzinfo is None:
+                        updated_time = updated_time.replace(tzinfo=timezone.utc)
+
+                    six_hours_ago = now - timedelta(hours=6)
+                    needs_refresh = updated_time is None or updated_time < six_hours_ago
+
+                    if needs_refresh and api_source:
+                        fetch_func = get_fetch_function(api_source)
+                        fresh_event = fetch_func(slug)
+
+                        if fresh_event:
+                            with refresh_conn.cursor() as cur_update:
+                                cur_update.execute("""
+                                    UPDATE contents 
+                                    SET lists = %s, updated_time = %s
+                                    WHERE slug = %s
+                                """, (
+                                    json.dumps(fresh_event, ensure_ascii=False),
+                                    now,
+                                    slug
+                                ))
+                                refresh_conn.commit()
+                                print(f"[后台刷新成功] 事件 {slug} 已更新")
+                        else:
+                            print(f"[后台刷新失败] 无法从 {api_source} 获取数据：{slug}")
+
+            except Exception as e:
+                print(f"[后台刷新异常] {slug}: {str(e)}")
+
+        # 只有非管理员访问时才触发自动刷新（避免重复刷新）
+        if api_source and user_role != "admin":
+            thread = threading.Thread(target=async_refresh_task, daemon=True)
+            thread.start()
 
 
 # ===== 初始化会话状态 =====
